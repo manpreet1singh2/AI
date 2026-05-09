@@ -1,0 +1,425 @@
+// ============================================
+// AURA AI - DATABASE SCHEMA
+// ============================================
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ============ USERS & AUTH ============
+
+model User {
+  id            String   @id @default(cuid())
+  email         String   @unique
+  emailVerified DateTime?
+  name          String?
+  image         String?
+  password      String?
+  role          UserRole @default(USER)
+  plan          PlanType @default(FREE)
+  credits       Int      @default(50)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  // Relations
+  workspaces     WorkspaceMember[]
+  ownedWorkspace Workspace[]
+  sessions       Session[]
+  accounts       Account[]
+
+  @@map("users")
+}
+
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String? @db.Text
+  access_token      String? @db.Text
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String? @db.Text
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+  @@map("accounts")
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("sessions")
+}
+
+// ============ WORKSPACES ============
+
+model Workspace {
+  id          String   @id @default(cuid())
+  name        String
+  slug        String   @unique
+  logo        String?
+  description String?
+  plan        PlanType @default(FREE)
+  ownerId     String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Relations
+  owner            User               @relation(fields: [ownerId], references: [id])
+  members          WorkspaceMember[]
+  brand            Brand?
+  socialAccounts   SocialAccount[]
+  contentItems     ContentItem[]
+  scheduledPosts   ScheduledPost[]
+  automations      Automation[]
+  campaigns        Campaign[]
+  analytics        Analytics[]
+
+  @@map("workspaces")
+}
+
+model WorkspaceMember {
+  id          String          @id @default(cuid())
+  workspaceId String
+  userId      String
+  role        WorkspaceRole   @default(VIEWER)
+  joinedAt    DateTime        @default(now())
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([workspaceId, userId])
+  @@map("workspace_members")
+}
+
+// ============ BRAND ============
+
+model Brand {
+  id          String   @id @default(cuid())
+  workspaceId String   @unique
+  name        String
+  logo        String?
+  colors      Json?    // { primary, secondary, accent }
+  fonts       Json?    // { heading, body }
+  toneOfVoice String[] @default([])
+  guidelines  String?  @db.Text
+  prompts     Json?    // saved prompt presets
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@map("brands")
+}
+
+// ============ SOCIAL ACCOUNTS ============
+
+model SocialAccount {
+  id            String         @id @default(cuid())
+  workspaceId   String
+  platform      SocialPlatform
+  accountId     String
+  accountName   String
+  username      String?
+  profileImage  String?
+  accessToken   String         @db.Text
+  refreshToken  String?        @db.Text
+  tokenExpiry   DateTime?
+  isActive      Boolean        @default(true)
+  metadata      Json?
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+
+  workspace      Workspace       @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  scheduledPosts ScheduledPost[]
+
+  @@unique([workspaceId, platform, accountId])
+  @@map("social_accounts")
+}
+
+// ============ CONTENT ============
+
+model ContentItem {
+  id           String      @id @default(cuid())
+  workspaceId  String
+  title        String
+  type         ContentType
+  status       ContentStatus @default(DRAFT)
+  prompt       String?     @db.Text
+  caption      String?     @db.Text
+  hashtags     String[]    @default([])
+  mediaUrls    String[]    @default([])
+  thumbnailUrl String?
+  script       String?     @db.Text
+  metadata     Json?
+  aiModel      String?
+  credits      Int         @default(0)
+  campaignId   String?
+  createdAt    DateTime    @default(now())
+  updatedAt    DateTime    @updatedAt
+
+  workspace      Workspace       @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  campaign       Campaign?       @relation(fields: [campaignId], references: [id])
+  scheduledPosts ScheduledPost[]
+  analytics      Analytics[]
+
+  @@map("content_items")
+}
+
+// ============ SCHEDULING ============
+
+model ScheduledPost {
+  id              String        @id @default(cuid())
+  workspaceId     String
+  contentId       String
+  socialAccountId String
+  scheduledAt     DateTime
+  publishedAt     DateTime?
+  status          PostStatus    @default(QUEUED)
+  platform        SocialPlatform
+  platformPostId  String?
+  caption         String?       @db.Text
+  hashtags        String[]      @default([])
+  mediaUrls       String[]      @default([])
+  error           String?
+  retryCount      Int           @default(0)
+  metadata        Json?
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  workspace     Workspace     @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  content       ContentItem   @relation(fields: [contentId], references: [id], onDelete: Cascade)
+  socialAccount SocialAccount @relation(fields: [socialAccountId], references: [id], onDelete: Cascade)
+
+  @@map("scheduled_posts")
+}
+
+// ============ CAMPAIGNS ============
+
+model Campaign {
+  id          String         @id @default(cuid())
+  workspaceId String
+  name        String
+  description String?        @db.Text
+  startDate   DateTime?
+  endDate     DateTime?
+  status      CampaignStatus @default(DRAFT)
+  goals       Json?
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+
+  workspace Workspace     @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  content   ContentItem[]
+
+  @@map("campaigns")
+}
+
+// ============ AUTOMATION ============
+
+model Automation {
+  id          String           @id @default(cuid())
+  workspaceId String
+  name        String
+  description String?          @db.Text
+  trigger     Json             // { type, config }
+  actions     Json             // [{ type, config, order }]
+  isActive    Boolean          @default(true)
+  runCount    Int              @default(0)
+  lastRunAt   DateTime?
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  runs      AutomationRun[]
+
+  @@map("automations")
+}
+
+model AutomationRun {
+  id           String      @id @default(cuid())
+  automationId String
+  status       RunStatus   @default(RUNNING)
+  startedAt    DateTime    @default(now())
+  completedAt  DateTime?
+  logs         Json?
+  error        String?
+
+  automation Automation @relation(fields: [automationId], references: [id], onDelete: Cascade)
+
+  @@map("automation_runs")
+}
+
+// ============ ANALYTICS ============
+
+model Analytics {
+  id            String         @id @default(cuid())
+  workspaceId   String
+  contentId     String?
+  platform      SocialPlatform
+  date          DateTime       @db.Date
+  views         Int            @default(0)
+  likes         Int            @default(0)
+  comments      Int            @default(0)
+  shares        Int            @default(0)
+  saves         Int            @default(0)
+  reach         Int            @default(0)
+  impressions   Int            @default(0)
+  clicks        Int            @default(0)
+  followers     Int            @default(0)
+  engagementRate Float         @default(0)
+  watchTime     Int?           // seconds
+  metadata      Json?
+  createdAt     DateTime       @default(now())
+
+  workspace Workspace    @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  content   ContentItem? @relation(fields: [contentId], references: [id])
+
+  @@map("analytics")
+}
+
+// ============ AI GENERATION JOBS ============
+
+model AIJob {
+  id          String     @id @default(cuid())
+  workspaceId String
+  type        AIJobType
+  status      JobStatus  @default(PENDING)
+  prompt      String     @db.Text
+  result      Json?
+  error       String?
+  credits     Int        @default(0)
+  model       String?
+  startedAt   DateTime?
+  completedAt DateTime?
+  createdAt   DateTime   @default(now())
+
+  @@map("ai_jobs")
+}
+
+// ============ SUBSCRIPTION & BILLING ============
+
+model Subscription {
+  id                 String   @id @default(cuid())
+  userId             String   @unique
+  stripeCustomerId   String?  @unique
+  stripeSubId        String?  @unique
+  stripePriceId      String?
+  plan               PlanType @default(FREE)
+  status             String   @default("active")
+  currentPeriodEnd   DateTime?
+  cancelAtPeriodEnd  Boolean  @default(false)
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  @@map("subscriptions")
+}
+
+// ============ ENUMS ============
+
+enum UserRole {
+  USER
+  ADMIN
+  SUPER_ADMIN
+}
+
+enum PlanType {
+  FREE
+  STARTER
+  PRO
+  AGENCY
+  ENTERPRISE
+}
+
+enum WorkspaceRole {
+  OWNER
+  ADMIN
+  EDITOR
+  VIEWER
+  CLIENT
+}
+
+enum SocialPlatform {
+  INSTAGRAM
+  FACEBOOK
+  YOUTUBE
+  TIKTOK
+  TWITTER
+  LINKEDIN
+  PINTEREST
+}
+
+enum ContentType {
+  IMAGE
+  VIDEO
+  REEL
+  CAROUSEL
+  STORY
+  SHORT
+  POST
+  THREAD
+}
+
+enum ContentStatus {
+  DRAFT
+  GENERATING
+  READY
+  SCHEDULED
+  PUBLISHED
+  FAILED
+  ARCHIVED
+}
+
+enum PostStatus {
+  QUEUED
+  PUBLISHING
+  PUBLISHED
+  FAILED
+  CANCELLED
+}
+
+enum CampaignStatus {
+  DRAFT
+  ACTIVE
+  PAUSED
+  COMPLETED
+  ARCHIVED
+}
+
+enum AIJobType {
+  TEXT_GENERATION
+  IMAGE_GENERATION
+  VIDEO_GENERATION
+  VOICE_GENERATION
+  SUBTITLE_GENERATION
+  HASHTAG_GENERATION
+  THUMBNAIL_GENERATION
+  SCRIPT_GENERATION
+}
+
+enum JobStatus {
+  PENDING
+  RUNNING
+  COMPLETED
+  FAILED
+  CANCELLED
+}
+
+enum RunStatus {
+  RUNNING
+  COMPLETED
+  FAILED
+}
